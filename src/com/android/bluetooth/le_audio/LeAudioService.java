@@ -13,6 +13,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ *
  */
 
 package com.android.bluetooth.le_audio;
@@ -65,6 +70,7 @@ import com.android.bluetooth.btservice.AdapterService;
 import com.android.bluetooth.btservice.ProfileService;
 import com.android.bluetooth.btservice.ServiceFactory;
 import com.android.bluetooth.hfp.HeadsetService;
+import com.android.bluetooth.hap.HapClientService;
 import com.android.bluetooth.btservice.storage.DatabaseManager;
 import com.android.bluetooth.csip.CsipSetCoordinatorService;
 import com.android.bluetooth.lebroadcast.BassClientService;
@@ -76,11 +82,13 @@ import com.android.modules.utils.SynchronousResultReceiver;
 
 import com.android.bluetooth.apm.ActiveDeviceManagerServiceIntf;
 import com.android.bluetooth.apm.ApmConstIntf;
+import com.android.bluetooth.apm.ApmConst;
 import com.android.bluetooth.apm.MediaAudioIntf;
 import com.android.bluetooth.apm.CallAudioIntf;
 import com.android.bluetooth.apm.VolumeManagerIntf;
 import com.android.bluetooth.acm.AcmServIntf;
 import com.android.internal.util.ArrayUtils;
+import com.android.bluetooth.apm.DeviceProfileMap;
 
 import java.util.Arrays;
 import java.math.BigInteger;
@@ -153,6 +161,7 @@ public class LeAudioService extends ProfileService {
     private HandlerThread mStateMachinesThread;
     private BluetoothDevice mActiveAudioOutDevice;
     private BluetoothDevice mActiveAudioInDevice;
+    private static BluetoothDevice mPreviousActiveDevice;
     private int mLeActiveGroupID;
     private LeAudioCodecConfig mLeAudioCodecConfig;
     ServiceFactory mServiceFactory = new ServiceFactory();
@@ -368,6 +377,7 @@ public class LeAudioService extends ProfileService {
             mStateMachines.clear();
         }*/
 
+        mPreviousActiveDevice = null;
         mDeviceGroupIdMap.clear();
         mDeviceAudioLocationMap.clear();
         mGroupDescriptors.clear();
@@ -487,7 +497,10 @@ public class LeAudioService extends ProfileService {
         if (!mPtsTmapConfBandC &&
             mPtsMediaAndVoice == 2) {
             if (mCallAudio != null) {
+                Log.d(TAG, "connect(): Connecting call AUdio");
                 mCallAudio.connect(device);
+            } else {
+                Log.d(TAG, "call AUdio is null");
             }
         }
 
@@ -1165,23 +1178,110 @@ public class LeAudioService extends ProfileService {
             setActiveDeviceGroup(device);
             return true;
         }*/
+        Log.d(TAG, "setActiveDevice() for device: " + device +
+                   ", mPreviousActiveDevice: " + mPreviousActiveDevice);
+        DeviceProfileMap dpm = DeviceProfileMap.getDeviceProfileMapInstance();
+        if (dpm == null) {
+            Log.w(TAG, "setActiveDevice: dpm is null, return.");
+            return false;
+        }
+        BluetoothDevice fetchCurrentActiveDevice = null;
+
+        if (device == null) {
+            fetchCurrentActiveDevice = mPreviousActiveDevice;
+            mPreviousActiveDevice = null;
+        } else {
+            fetchCurrentActiveDevice = device;
+        }
+
+        int MediaProfID = dpm.getSupportedProfile(fetchCurrentActiveDevice,
+                                           ApmConst.AudioFeatures.MEDIA_AUDIO);
+        int VoiceProfID = dpm.getSupportedProfile(fetchCurrentActiveDevice,
+                                            ApmConst.AudioFeatures.CALL_AUDIO);
+        Log.d(TAG, "setActiveDevice: "+ " MediaProfID:" + MediaProfID +
+                   ", VoiceProfID:" + VoiceProfID);
+
+        mPreviousActiveDevice = device;
+        CallAudioIntf mCallAudio = CallAudioIntf.get();
+        boolean isInCall =
+                mCallAudio != null && mCallAudio.isVoiceOrCallActive();
+
         ActiveDeviceManagerServiceIntf activeDeviceManager =
                                             ActiveDeviceManagerServiceIntf.get();
-        activeDeviceManager.setActiveDevice(device,
-                                            ApmConstIntf.AudioFeatures.CALL_AUDIO);
-        activeDeviceManager.setActiveDevice(device,
-                                            ApmConstIntf.AudioFeatures.MEDIA_AUDIO);
+        if (device == null || ((ApmConst.AudioProfiles.HAP_LE & VoiceProfID) ==
+                                          ApmConst.AudioProfiles.HAP_LE) ||
+            ((ApmConst.AudioProfiles.BAP_CALL & VoiceProfID) ==
+                                          ApmConst.AudioProfiles.BAP_CALL)) {
+            if (isInCall) {
+                activeDeviceManager.setActiveDeviceBlocking(device,
+                                                ApmConstIntf.AudioFeatures.CALL_AUDIO);
+            } else {
+                activeDeviceManager.setActiveDevice(device,
+                                             ApmConstIntf.AudioFeatures.CALL_AUDIO);
+            }
+        }
+
+        if (device == null || ((ApmConst.AudioProfiles.HAP_LE & MediaProfID) ==
+                                         ApmConst.AudioProfiles.HAP_LE) ||
+            ((ApmConst.AudioProfiles.BAP_MEDIA & MediaProfID) ==
+                                         ApmConst.AudioProfiles.BAP_MEDIA)) {
+            if (isInCall) {
+                activeDeviceManager.setActiveDeviceBlocking(device,
+                                             ApmConstIntf.AudioFeatures.MEDIA_AUDIO);
+            } else {
+                activeDeviceManager.setActiveDevice(device,
+                                          ApmConstIntf.AudioFeatures.MEDIA_AUDIO);
+            }
+        }
         return true;
     }
 
     public boolean setActiveDeviceBlocking(BluetoothDevice device) {
-        Log.d(TAG, "setActiveDeviceBlocking() for device: " + device);
+        Log.d(TAG, "setActiveDeviceBlocking() for device: " + device +
+                   ", mPreviousActiveDevice: " + mPreviousActiveDevice);
+        DeviceProfileMap dpm = DeviceProfileMap.getDeviceProfileMapInstance();
+        if (dpm == null) {
+            Log.w(TAG, "setActiveDeviceBlocking: dpm is null, return.");
+            return false;
+        }
+        BluetoothDevice fetchCurrentActiveDevice = null;
+
+        if (device == null) {
+            fetchCurrentActiveDevice = mPreviousActiveDevice;
+            mPreviousActiveDevice = null;
+        } else {
+            fetchCurrentActiveDevice = device;
+        }
+
+        Log.d(TAG, "setActiveDeviceBlocking(): fetchCurrentActiveDevice: " +
+                                                       fetchCurrentActiveDevice);
+
+        int MediaProfID = dpm.getSupportedProfile(fetchCurrentActiveDevice,
+                                              ApmConst.AudioFeatures.MEDIA_AUDIO);
+        int VoiceProfID = dpm.getSupportedProfile(fetchCurrentActiveDevice,
+                                               ApmConst.AudioFeatures.CALL_AUDIO);
+        Log.d(TAG, "setActiveDeviceBlocking: "+ " MediaProfID:" + MediaProfID +
+                   ", VoiceProfID:" + VoiceProfID);
+        mPreviousActiveDevice = device;
+
         ActiveDeviceManagerServiceIntf activeDeviceManager =
                                             ActiveDeviceManagerServiceIntf.get();
-        activeDeviceManager.setActiveDeviceBlocking(device,
+
+        if (device == null || ((ApmConst.AudioProfiles.HAP_LE & VoiceProfID) ==
+                                          ApmConst.AudioProfiles.HAP_LE) ||
+            ((ApmConst.AudioProfiles.BAP_CALL & VoiceProfID) ==
+                                          ApmConst.AudioProfiles.BAP_CALL)) {
+            activeDeviceManager.setActiveDeviceBlocking(device,
                                             ApmConstIntf.AudioFeatures.CALL_AUDIO);
-        activeDeviceManager.setActiveDeviceBlocking(device,
+        }
+
+        if (device == null || ((ApmConst.AudioProfiles.HAP_LE & MediaProfID) ==
+                                                 ApmConst.AudioProfiles.HAP_LE) ||
+            ((ApmConst.AudioProfiles.BAP_MEDIA & MediaProfID) ==
+                                                 ApmConst.AudioProfiles.BAP_MEDIA)) {
+            activeDeviceManager.setActiveDeviceBlocking(device,
                                             ApmConstIntf.AudioFeatures.MEDIA_AUDIO);
+        }
         return true;
     }
 
@@ -1211,6 +1311,13 @@ public class LeAudioService extends ProfileService {
                 activeDevices.add(1, mActiveAudioInDevice);
         }*/
 
+        activeDevices.add(0, null);
+        activeDevices.add(1, null);
+        if (ApmConstIntf.getQtiLeAudioEnabled()) {
+            Log.d(TAG, "QTI LeAudio is enabled, return empty list");
+            return activeDevices;
+        }
+
         ActiveDeviceManagerServiceIntf activeDeviceManager =
                                             ActiveDeviceManagerServiceIntf.get();
         BluetoothDevice outDevice = activeDeviceManager.getActiveAbsoluteDevice(ApmConstIntf.AudioFeatures.MEDIA_AUDIO);
@@ -1228,13 +1335,21 @@ public class LeAudioService extends ProfileService {
         mActiveAudioInDevice =
             activeDeviceManager.getActiveAbsoluteDevice(ApmConstIntf.AudioFeatures.CALL_AUDIO);
 */
+        int ActiveAudioMediaProfile =
+            activeDeviceManager.getActiveProfile(ApmConstIntf.AudioFeatures.MEDIA_AUDIO);
+        int ActiveAudioCallProfile =
+            activeDeviceManager.getActiveProfile(ApmConstIntf.AudioFeatures.CALL_AUDIO);
+
         /*if (ActiveAudioMediaProfile == ApmConst.AudioProfiles.TMAP_MEDIA ||
             ActiveAudioMediaProfile == ApmConst.AudioProfiles.BAP_MEDIA ||
             ActiveAudioMediaProfile == ApmConst.AudioProfiles.BAP_GCP ||
             ActiveAudioMediaProfile == ApmConst.AudioProfiles.BAP_GCP_VBC ||
             ActiveAudioCallProfile == ApmConst.AudioProfiles.TMAP_CALL ||
-            ActiveAudioCallProfile == ApmConst.AudioProfiles.BAP_CALL)
-            activeDevices.add(0, mActiveAudioOutDevice);
+            ActiveAudioCallProfile == ApmConst.AudioProfiles.BAP_CALL) {
+            if (ActiveAudioCallProfile != ApmConst.AudioProfiles.HFP) {
+                activeDevices.add(0, mActiveAudioOutDevice);
+            }
+        }
 
         if (ActiveAudioMediaProfile == ApmConst.AudioProfiles.BAP_RECORDING ||
             ActiveAudioMediaProfile == ApmConst.AudioProfiles.BAP_GCP_VBC ||
@@ -1249,6 +1364,12 @@ public class LeAudioService extends ProfileService {
                 activeDevices.add(1, mActiveAudioInDevice);
             }
         }*/
+
+        if ((ActiveAudioMediaProfile == ApmConst.AudioProfiles.BROADCAST_LE) &&
+                (ActiveAudioCallProfile == ApmConst.AudioProfiles.TMAP_CALL ||
+                ActiveAudioCallProfile == ApmConst.AudioProfiles.BAP_CALL)) {
+            mActiveAudioOutDevice = mActiveAudioInDevice;
+        }
         activeDevices.add(0, mActiveAudioOutDevice);
         int activeGid = getGroupId(mActiveAudioOutDevice);
         if (activeGid < INVALID_SET_ID) {
@@ -1926,6 +2047,17 @@ public class LeAudioService extends ProfileService {
             Log.d(TAG, "Saved connectionPolicy " + device + " = " + connectionPolicy);
         }
 
+        ParcelUuid[] featureUuids = mAdapterService.getRemoteUuids(device);
+        if (ArrayUtils.contains(featureUuids, BluetoothUuid.HAS)) {
+            Log.e(TAG, ": Remote has Hearing Aid UUID");
+           //Calling HapClient Setconnection policy
+           HapClientService hapClientService = HapClientService.getHapClientService();
+           if (hapClientService != null) {
+              hapClientService.setConnectionPolicy(device, connectionPolicy);
+              Log.d(TAG, "Hap connectionPolicy ");
+           }
+        }
+
         if (!mDatabaseManager.setProfileConnectionPolicy(device, BluetoothProfile.LE_AUDIO,
                   connectionPolicy)) {
             return false;
@@ -2519,12 +2651,50 @@ public class LeAudioService extends ProfileService {
                 boolean defaultValueVoice = false;
                 boolean defaultValueMedia = false;
                 if (service != null) {
+                    Log.d(TAG, "Binder setActiveDevice() for device: " + device +
+                               ", mPreviousActiveDevice: " + mPreviousActiveDevice);
                     ActiveDeviceManagerServiceIntf activeDeviceManager =
                                                 ActiveDeviceManagerServiceIntf.get();
-                    defaultValueVoice = activeDeviceManager.setActiveDevice(device,
-                                          ApmConstIntf.AudioFeatures.CALL_AUDIO, true);
-                    defaultValueMedia = activeDeviceManager.setActiveDevice(device,
-                                          ApmConstIntf.AudioFeatures.MEDIA_AUDIO, true);
+                    DeviceProfileMap dpm = DeviceProfileMap.getDeviceProfileMapInstance();
+                    if (dpm == null) {
+                        Log.w(TAG, "Binder setActiveDevice: dpm is null, return.");
+                        return;
+                    }
+
+                    BluetoothDevice fetchCurrentActiveDevice = null;
+
+                    if (device == null) {
+                        fetchCurrentActiveDevice = mPreviousActiveDevice;
+                        mPreviousActiveDevice = null;
+                    } else {
+                        fetchCurrentActiveDevice = device;
+                    }
+
+                    int MediaProfID = dpm.getSupportedProfile(fetchCurrentActiveDevice,
+                                                      ApmConst.AudioFeatures.MEDIA_AUDIO);
+                    int VoiceProfID = dpm.getSupportedProfile(fetchCurrentActiveDevice,
+                                                       ApmConst.AudioFeatures.CALL_AUDIO);
+                    Log.d(TAG, "Binder setActiveDevice: "+ " MediaProfID:" + MediaProfID +
+                               ", VoiceProfID:" + VoiceProfID);
+
+                    mPreviousActiveDevice = device;
+
+                    if (((ApmConst.AudioProfiles.HAP_LE & VoiceProfID) ==
+                                                      ApmConst.AudioProfiles.HAP_LE) ||
+                        ((ApmConst.AudioProfiles.BAP_CALL & VoiceProfID) ==
+                                                      ApmConst.AudioProfiles.BAP_CALL)) {
+                        defaultValueVoice = activeDeviceManager.setActiveDevice(device,
+                                              ApmConstIntf.AudioFeatures.CALL_AUDIO, true);
+                    }
+
+                    if (((ApmConst.AudioProfiles.HAP_LE & MediaProfID) ==
+                                                      ApmConst.AudioProfiles.HAP_LE) ||
+                        ((ApmConst.AudioProfiles.BAP_MEDIA & MediaProfID) ==
+                                                      ApmConst.AudioProfiles.BAP_MEDIA)) {
+                        defaultValueMedia = activeDeviceManager.setActiveDevice(device,
+                                              ApmConstIntf.AudioFeatures.MEDIA_AUDIO, true);
+                    }
+
                     defaultValue = (defaultValueVoice & defaultValueMedia);
                 }
                 receiver.send(defaultValue);

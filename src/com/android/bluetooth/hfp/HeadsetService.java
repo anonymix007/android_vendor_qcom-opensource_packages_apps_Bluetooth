@@ -46,6 +46,11 @@
  * IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
  * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
  * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE
+ *
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ *
  */
 
 package com.android.bluetooth.hfp;
@@ -94,11 +99,15 @@ import com.android.bluetooth.btservice.storage.DatabaseManager;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.bluetooth.apm.DeviceProfileMapIntf;
 import com.android.bluetooth.apm.ApmConstIntf;
+import com.android.bluetooth.apm.ApmConst;
 import com.android.bluetooth.apm.CallAudioIntf;
 import com.android.bluetooth.apm.CallControlIntf;
 import com.android.bluetooth.apm.ActiveDeviceManagerServiceIntf;
 import com.android.bluetooth.le_audio.LeAudioService;
 import com.android.modules.utils.SynchronousResultReceiver;
+import com.android.bluetooth.cc.CCService;
+import com.android.bluetooth.acm.AcmService;
+import com.android.bluetooth.apm.StreamAudioService;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -155,6 +164,7 @@ public class HeadsetService extends ProfileService {
     private int mSetMaxConfig;
     private BluetoothDevice mActiveDevice;
     private BluetoothDevice mTempActiveDevice;
+    private BluetoothDevice mTempDualModeActiveDevice;
     private boolean mSHOStatus = false;
     private AdapterService mAdapterService;
     private DatabaseManager mDatabaseManager;
@@ -184,6 +194,7 @@ public class HeadsetService extends ProfileService {
     private boolean mIsTwsPlusShoEnabled = false;
     private vendorhfservice  mVendorHf;
     private Context mContext = null;
+    private static final int BAP_CALL  = 0x10;
     private AudioServerStateCallback mServerStateCallback = new AudioServerStateCallback();
     private static final int AUDIO_CONNECTION_DELAY_DEFAULT = 100;
     private static final String ACTION_BATTERY_STATE_CHANGED = "android.bluetooth.action.BATTERY_STATE_CHANGED";
@@ -647,6 +658,11 @@ public class HeadsetService extends ProfileService {
             mCallAudio.onAudioStateChange(device, mAudioState);
     }
 
+    public boolean isVoipLeaWarEnabled() {
+        CallAudioIntf mCallAudio = CallAudioIntf.get();
+        return mCallAudio.isVoipLeaWarEnabled();
+    }
+
     public void setIntentScoVolume(Intent intent) {
         Log.w(TAG, "setIntentScoVolume");
         synchronized (mStateMachines) {
@@ -687,6 +703,24 @@ public class HeadsetService extends ProfileService {
                 return null;
             }
             return mService;
+        }
+
+        private boolean isAospLeaVoipWarEnabled() {
+            boolean ret = false;
+            if (ApmConstIntf.getAospLeaEnabled()) {
+                CallAudioIntf mCallAudio = CallAudioIntf.get();
+                ActiveDeviceManagerServiceIntf mActiveDeviceManager =
+                        ActiveDeviceManagerServiceIntf.get();
+                if (mCallAudio.isVoipLeaWarEnabled() &&
+                        (mActiveDeviceManager.getActiveProfile(ApmConst.AudioFeatures.CALL_AUDIO)
+                        == ApmConst.AudioProfiles.BAP_CALL ||
+                        mActiveDeviceManager.getActiveProfile(ApmConst.AudioFeatures.CALL_AUDIO)
+                        == ApmConst.AudioProfiles.TMAP_CALL)) {
+                   ret = true;
+                }
+            }
+            Log.i(TAG, "isAospLeaVoipWarEnabled: " + ret);
+            return ret;
         }
 
         @Override
@@ -744,7 +778,7 @@ public class HeadsetService extends ProfileService {
                 SynchronousResultReceiver receiver) {
             try {
                 List<BluetoothDevice> defaultValue = new ArrayList<BluetoothDevice>(0);
-                if (ApmConstIntf.getQtiLeAudioEnabled()) {
+                if (ApmConstIntf.getQtiLeAudioEnabled() || isAospLeaVoipWarEnabled()) {
                     Log.d(TAG, "getConnectedDevicesWithAttribution(): Adv Audio enabled");
                     CallAudioIntf mCallAudio = CallAudioIntf.get();
                     if (mCallAudio != null) {
@@ -769,7 +803,7 @@ public class HeadsetService extends ProfileService {
                 AttributionSource source, SynchronousResultReceiver receiver) {
             try {
                 List<BluetoothDevice> defaultValue = new ArrayList<BluetoothDevice>(0);
-                if (ApmConstIntf.getQtiLeAudioEnabled()) {
+                if (ApmConstIntf.getQtiLeAudioEnabled() || isAospLeaVoipWarEnabled()) {
                     Log.d(TAG, "getDevicesMatchingConnectionStates(): Adv Audio enabled");
                     CallAudioIntf mCallAudio = CallAudioIntf.get();
                     defaultValue = mCallAudio.getDevicesMatchingConnectionStates(states);
@@ -943,7 +977,7 @@ public class HeadsetService extends ProfileService {
         public void isAudioOn(AttributionSource source, SynchronousResultReceiver receiver) {
             try {
                 boolean defaultValue = false;
-                if(ApmConstIntf.getQtiLeAudioEnabled()) {
+                if(ApmConstIntf.getQtiLeAudioEnabled() || isAospLeaVoipWarEnabled()) {
                     Log.d(TAG, "isAudioOn(): Adv Audio enabled");
                     CallAudioIntf mCallAudio = CallAudioIntf.get();
                     defaultValue = mCallAudio.isAudioOn();
@@ -980,7 +1014,8 @@ public class HeadsetService extends ProfileService {
                   SynchronousResultReceiver receiver) {
             try {
                 int defaultValue = BluetoothHeadset.STATE_AUDIO_DISCONNECTED;
-                if(ApmConstIntf.getQtiLeAudioEnabled()) {
+                // Not fake getAudioState API for Aosp LeAudio VOIP WAR
+                if (ApmConstIntf.getQtiLeAudioEnabled()) {
                      Log.d(TAG, "getAudioState(): Adv Audio enabled");
                     CallAudioIntf mCallAudio = CallAudioIntf.get();
                     defaultValue = mCallAudio.getAudioState(device);
@@ -1100,7 +1135,7 @@ public class HeadsetService extends ProfileService {
             SynchronousResultReceiver receiver) {
             try {
                 boolean defaultValue = false;
-                if(ApmConstIntf.getQtiLeAudioEnabled()) {
+                if(ApmConstIntf.getQtiLeAudioEnabled() || isAospLeaVoipWarEnabled()) {
                      Log.d(TAG, "startScoUsingVirtualVoiceCall(): Adv Audio enabled");
                     CallAudioIntf mCallAudio = CallAudioIntf.get();
                     defaultValue = mCallAudio.startScoUsingVirtualVoiceCall();
@@ -1122,7 +1157,7 @@ public class HeadsetService extends ProfileService {
             SynchronousResultReceiver receiver) {
             try {
                  boolean defaultValue = false;
-                 if(ApmConstIntf.getQtiLeAudioEnabled()) {
+                 if(ApmConstIntf.getQtiLeAudioEnabled() || isAospLeaVoipWarEnabled()) {
                       Log.d(TAG, "stopScoUsingVirtualVoiceCall(): Adv Audio enabled");
                      CallAudioIntf mCallAudio = CallAudioIntf.get();
                      defaultValue = mCallAudio.stopScoUsingVirtualVoiceCall();
@@ -1210,7 +1245,7 @@ public class HeadsetService extends ProfileService {
         public void getActiveDevice(AttributionSource source, SynchronousResultReceiver receiver) {
             try {
                BluetoothDevice defaultValue = null;
-               if(ApmConstIntf.getQtiLeAudioEnabled()) {
+               if(ApmConstIntf.getQtiLeAudioEnabled() || isAospLeaVoipWarEnabled()) {
                    ActiveDeviceManagerServiceIntf activeDeviceManager = ActiveDeviceManagerServiceIntf.get();
                    defaultValue = activeDeviceManager.getActiveAbsoluteDevice(ApmConstIntf.AudioFeatures.CALL_AUDIO);
                    receiver.send(defaultValue);
@@ -2357,7 +2392,39 @@ public class HeadsetService extends ProfileService {
             }
             if (mActiveDevice == null) {
                 Log.w(TAG, "startScoUsingVirtualVoiceCall: no active device");
-                return false;
+                if (Utils.isDualModeAudioEnabled()) {
+                    Log.i(TAG, "Dual mode is enabled");
+                    ActiveDeviceManagerServiceIntf mActiveDeviceManager =
+                            ActiveDeviceManagerServiceIntf.get();
+                    StreamAudioService mStreamAudioService =
+                            StreamAudioService.getStreamAudioService();
+                    if (mActiveDeviceManager != null) {
+                       mTempDualModeActiveDevice =
+                             mActiveDeviceManager.getActiveAbsoluteDevice(ApmConstIntf.AudioFeatures.CALL_AUDIO);
+                    }
+                    if (mStreamAudioService != null) {
+                       Log.i(TAG, "Setting ACM null device");
+                       int ret =
+                             mStreamAudioService.setActiveDevice(null,
+                                                                 BAP_CALL,
+                                                                 false);
+			           mHfpA2dpSyncInterface.suspendLeAudio(HeadsetA2dpSync.
+                                                       A2DP_SUSPENDED_BY_CS_CALL);
+                    }
+                    if (mTempDualModeActiveDevice != null) {
+                        int ret  = setActiveDeviceHF(mTempDualModeActiveDevice);
+                        if (ret == ActiveDeviceManagerServiceIntf.SHO_SUCCESS) {
+                            //Active device is set. Initiate SCO.
+                            Log.i(TAG, "active device is set. Initiate SCO");
+                        } else {
+                            return false;
+                        }
+                    } else {
+                       return false;
+                    }
+                } else {
+                  return false;
+                }
             }
             mVirtualCallStarted = true;
             mSystemInterface.getHeadsetPhoneState().setIsCsCall(false);
@@ -2382,6 +2449,21 @@ public class HeadsetService extends ProfileService {
             mVirtualCallStarted = false;
             // 2. Send virtual phone state changed to close SCO
             phoneStateChanged(0, 0, HeadsetHalConstants.CALL_STATE_IDLE, "", 0, "", true);
+        }
+        if (Utils.isDualModeAudioEnabled()) {
+           StreamAudioService mStreamAudioService =
+                       StreamAudioService.getStreamAudioService();
+           if (mTempDualModeActiveDevice != null) {
+               if (mStreamAudioService != null) {
+                   Log.i(TAG, "Setting ACM device after voip");
+                   int ret =
+                        mStreamAudioService.setActiveDevice(mTempDualModeActiveDevice,
+                                                            BAP_CALL,
+                                                            false);
+               }
+               setActiveDeviceHF(null);
+               mTempDualModeActiveDevice = null;
+           }
         }
         return true;
     }
@@ -2846,8 +2928,19 @@ public class HeadsetService extends ProfileService {
         synchronized (mStateMachines) {
             List<BluetoothDevice> audioConnectableDevices =
                                             getConnectedDevices();
+             CCService ccService = CCService.getCCService();
+             AcmService acmService = AcmService.getAcmService();
+			 List<BluetoothDevice> leaudioConnectableDevices = new ArrayList<>(0);
+             if (acmService != null)
+                leaudioConnectableDevices = acmService.getConnectedDevices();
             if (fromState != BluetoothProfile.STATE_CONNECTED
                     && toState == BluetoothProfile.STATE_CONNECTED) {
+                if (ccService != null) {
+                  if ((leaudioConnectableDevices.size() >= 1) && ccService.isInbandRingingEnabled()) {
+                     Log.i(TAG,"Disable Inband Ringtone for CC if hf device also connected");
+                     ccService.updateStatusFlags(0);
+                  }
+                }
                 boolean isInbandRingingSupported = getResources().getBoolean(
                         com.android.bluetooth.R.bool.config_bluetooth_hfp_inband_ringing_support);
                 if (audioConnectableDevices.size() > 1 && isInbandRingingSupported &&
@@ -2863,6 +2956,12 @@ public class HeadsetService extends ProfileService {
                     && toState == BluetoothProfile.STATE_DISCONNECTED) {
                 if (audioConnectableDevices.size() <= 1 ) {
                     mInbandRingingRuntimeDisable = false;
+                    if (ccService != null) {
+                      if (leaudioConnectableDevices.size() <= 1 && ccService.isInbandRingingEnabled()) {
+                        Log.i(TAG,"enable Inband Ringtone for CC if hf device is disconnected");
+                        ccService.updateStatusFlags(1);
+                      }
+                    }
                 }
                 if (device.equals(mActiveDevice)) {
                     AdapterService adapterService = AdapterService.getAdapterService();

@@ -45,6 +45,7 @@ import com.android.bluetooth.a2dp.A2dpService;
 import com.android.bluetooth.apm.ApmConstIntf;
 import com.android.bluetooth.apm.ActiveDeviceManagerServiceIntf;
 import com.android.bluetooth.apm.CallAudioIntf;
+import com.android.bluetooth.cc.CCService;
 
 import com.android.bluetooth.hearingaid.HearingAidService;
 import com.android.bluetooth.hfp.HeadsetService;
@@ -861,6 +862,7 @@ public class ActiveDeviceManager {
                 Log.d(TAG, "LEA device is source : " + bleDeviceInfo.isSource());
                 mWiredDeviceConnected = false;
                 BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+                boolean isDuMoEnabled = Utils.isDualModeAudioEnabled();
                 BluetoothDevice dev = adapter.getRemoteDevice(bleDeviceInfo.getAddress());
                 ActiveDeviceManagerServiceIntf activeDeviceManager =
                                                     ActiveDeviceManagerServiceIntf.get();
@@ -871,11 +873,16 @@ public class ActiveDeviceManager {
                        activeDeviceManager.getActiveDevice(ApmConstIntf.AudioFeatures.CALL_AUDIO);
                     Log.d(TAG, "LEA active dev: " + dev + ", absolute device:" + AbsDevice);
                     Log.d(TAG, "current active dev:" + activeDevice);
-                    if (Objects.equals(dev,activeDevice) && bleDeviceInfo.isSource()) {
+                    if ((Objects.equals(dev,activeDevice) && bleDeviceInfo.isSource()) ||
+                        (isDuMoEnabled && (Objects.equals(dev,AbsDevice) && bleDeviceInfo.isSource()))) {
                         Log.d(TAG, "broadcast LEA device address: " + activeDevice);
                         broadcastLeActiveDeviceChange(AbsDevice);
                         onLeActiveDeviceChange(AbsDevice);
                         mLeAudioActiveDevice = AbsDevice;
+                        CCService ccService = CCService.getCCService();
+                        if (ccService != null) {
+                            ccService.handleAnswerCall(AbsDevice);
+                        }
                     }
                 }
             }
