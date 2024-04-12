@@ -637,9 +637,13 @@ static JNINativeMethod sMethods[] = {
      (void*)groupSetPresetNameNative},
 };
 
+static bool cMethods[NELEM(sMethods)];
+
+extern int jniRegisterNativeMethodsSafe(JNIEnv* env, const char *className, JNINativeMethod *methods, bool *cursedMethods, size_t count);
+
 int register_com_android_bluetooth_hap_client(JNIEnv* env) {
-  return jniRegisterNativeMethods(
-      env, "com/android/bluetooth/hap/HapClientNativeInterface", sMethods,
+  return jniRegisterNativeMethodsSafe(
+      env, "com/android/bluetooth/hap/HapClientNativeInterface", sMethods, cMethods,
       NELEM(sMethods));
 }
 }  // namespace android

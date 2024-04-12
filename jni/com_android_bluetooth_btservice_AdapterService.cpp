@@ -101,6 +101,11 @@ static jobject sJniAdapterServiceObj = NULL;
 static jobject sJniCallbacksObj = NULL;
 static jfieldID sJniCallbacksField;
 
+static const bt_interface_t *btIfExt = NULL;
+extern "C" void setBluetoothInterface(const bt_interface_t *btIf) {
+	btIfExt = btIf;
+}
+
 const bt_interface_t* getBluetoothInterface() { return sBluetoothInterface; }
 
 JNIEnv* getCallbackEnv() { return callbackEnv; }
@@ -806,6 +811,10 @@ static bt_os_callouts_t sBluetoothOsCallouts = {
 #define DEFAULT_BT_LIBRARY_NAME "libbluetooth.so"
 
 int hal_util_load_bt_library(const bt_interface_t** interface) {
+  if (btIfExt) {
+	  *interface = btIfExt;
+	  return 0;
+  }
   const char* sym = BLUETOOTH_INTERFACE_STRING;
   bt_interface_t* itf = nullptr;
 
@@ -1517,7 +1526,7 @@ static jboolean getRemoteServicesNative(JNIEnv* env, jobject obj,
     return JNI_FALSE;
   }
 
-  int ret = 
+  int ret =
       sBluetoothInterface->get_remote_services((RawAddress*)addr, transport);
   env->ReleaseByteArrayElements(address, addr, 0);
   return (ret == BT_STATUS_SUCCESS) ? JNI_TRUE : JNI_FALSE;

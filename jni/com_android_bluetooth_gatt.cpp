@@ -1097,6 +1097,11 @@ static void classInitNative(JNIEnv* env, jclass clazz) {
       env->GetMethodID(clazz, "onScannerRegistered", "(IIJJ)V");
   method_onScanResult = env->GetMethodID(clazz, "onScanResult",
                                          "(IILjava/lang/String;IIIIII[BLjava/lang/String;)V");
+  if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+         method_onScanResult = env->GetMethodID(clazz, "onScanResult",
+                                         "(IILjava/lang/String;IIIIII[B)V");
+  }
   method_onConnected =
       env->GetMethodID(clazz, "onConnected", "(IIILjava/lang/String;)V");
   method_onDisconnected =
